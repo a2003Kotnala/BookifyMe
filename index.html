@@ -1,0 +1,936 @@
+<script>
+    // Configuration
+    const GOOGLE_BOOKS_API_KEY = 'YOUR_API_KEY_HERE'; // Replace with your actual API key
+    const GOOGLE_BOOKS_BASE_URL = 'https://www.googleapis.com/books/v1/volumes';
+    
+    // DOM Elements
+    const navLinks = document.querySelectorAll('.nav-link');
+    const tabContents = document.querySelectorAll('.tab-content');
+    const loginBtn = document.getElementById('login-btn');
+    const registerBtn = document.getElementById('register-btn');
+    const logoutBtn = document.getElementById('logout-btn');
+    const myBooksLink = document.getElementById('my-books-link');
+    const loginModal = document.getElementById('login-modal');
+    const registerModal = document.getElementById('register-modal');
+    const closeModalButtons = document.querySelectorAll('.close-modal');
+    const switchToRegister = document.getElementById('switch-to-register');
+    const switchToLogin = document.getElementById('switch-to-login');
+    const browseSearchInput = document.getElementById('browse-search-input');
+    const browseSearchButton = document.getElementById('browse-search-button');
+    const categories = document.querySelectorAll('.category');
+    const categoryCards = document.querySelectorAll('.category-card');
+    
+         // User state and data
+     let currentUser = null;
+     let userBooks = {
+         reading: [],
+         wantToRead: [],
+         finished: []
+     };
+     let userInteractions = [];
+     let recommendedBooks = [];
+     let userRatings = {};
+     
+     // Book cache for better performance
+     let booksCache = {};
+    
+    // Initialize the application
+    function init() {
+        setupEventListeners();
+        checkLoginStatus();
+        loadInitialBooks();
+        setupAPIInfo();
+    }
+    
+    // Set up all event listeners
+    function setupEventListeners() {
+        // Navigation
+        navLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const tab = link.getAttribute('data-tab');
+                switchTab(tab);
+            });
+        });
+        
+        // Auth buttons
+        loginBtn.addEventListener('click', () => openModal('login'));
+        registerBtn.addEventListener('click', () => openModal('register'));
+        logoutBtn.addEventListener('click', handleLogout);
+        
+        // Modal controls
+        closeModalButtons.forEach(button => {
+            button.addEventListener('click', closeModals);
+        });
+        
+        // Close modal when clicking outside
+        window.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal')) {
+                closeModals();
+            }
+        });
+        
+        switchToRegister.addEventListener('click', (e) => {
+            e.preventDefault();
+            closeModals();
+            openModal('register');
+        });
+        
+        switchToLogin.addEventListener('click', (e) => {
+            e.preventDefault();
+            closeModals();
+            openModal('login');
+        });
+        
+        // Search functionality
+        browseSearchButton.addEventListener('click', handleSearch);
+        browseSearchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleSearch();
+            }
+        });
+        
+        // Category selection
+        categories.forEach(category => {
+            category.addEventListener('click', () => {
+                categories.forEach(c => c.classList.remove('active'));
+                category.classList.add('active');
+                const categoryName = category.getAttribute('data-category');
+                filterBooksByCategory(categoryName);
+            });
+        });
+        
+        categoryCards.forEach(card => {
+            card.addEventListener('click', () => {
+                const category = card.getAttribute('data-category');
+                switchTab('browse');
+                setTimeout(() => {
+                    categories.forEach(c => c.classList.remove('active'));
+                    const targetCategory = document.querySelector(`.category[data-category="${category}"]`);
+                    if (targetCategory) {
+                        targetCategory.classList.add('active');
+                        filterBooksByCategory(category);
+                    }
+                }, 100);
+            });
+        });
+        
+        // Auth forms submission
+        document.querySelector('#login-modal form').addEventListener('submit', handleLogin);
+        document.querySelector('#register-modal form').addEventListener('submit', handleRegister);
+    }
+    
+    // API Functions
+    async function searchGoogleBooks(query, maxResults = 12, startIndex = 0) {
+        try {
+            const url = `${GOOGLE_BOOKS_BASE_URL}?q=${encodeURIComponent(query)}&maxResults=${maxResults}&startIndex=${startIndex}&key=${GOOGLE_BOOKS_API_KEY}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data.items) {
+                return data.items.map(item => formatBookData(item));
+            }
+            return [];
+        } catch (error) {
+            console.error('Error fetching books:', error);
+            return [];
+        }
+    }
+    
+    async function getBooksByCategory(category, maxResults = 12) {
+        try {
+            const query = `subject:${category}`;
+            return await searchGoogleBooks(query, maxResults);
+        } catch (error) {
+            console.error('Error fetching books by category:', error);
+            return [];
+        }
+    }
+    
+    async function getTopRatedBooks() {
+        try {
+            // Get popular books from various categories
+            const categories = ['fiction', 'science', 'technology', 'history', 'biography'];
+            const promises = categories.map(cat => searchGoogleBooks(`subject:${cat}`, 4));
+            const results = await Promise.all(promises);
+            
+            return results.flat().sort((a, b) => (b.rating || 0) - (a.rating || 0));
+        } catch (error) {
+            console.error('Error fetching top rated books:', error);
+            return [];
+        }
+    }
+    
+    function formatBookData(item) {
+        const volumeInfo = item.volumeInfo;
+        const saleInfo = item.saleInfo;
+        
+        return {
+            id: item.id,
+            title: volumeInfo.title || 'Unknown Title',
+            authors: volumeInfo.authors || ['Unknown Author'],
+            description: volumeInfo.description || 'No description available.',
+            categories: volumeInfo.categories || [],
+            thumbnail: volumeInfo.imageLinks?.thumbnail || volumeInfo.imageLinks?.smallThumbnail || 'https://via.placeholder.com/200x300?text=No+Cover',
+            rating: volumeInfo.averageRating || Math.random() * 2 + 3, // Random rating if none available
+            ratingsCount: volumeInfo.ratingsCount || Math.floor(Math.random() * 1000),
+            publishedDate: volumeInfo.publishedDate,
+            pageCount: volumeInfo.pageCount,
+            language: volumeInfo.language,
+            previewLink: volumeInfo.previewLink,
+            infoLink: volumeInfo.infoLink,
+            buyLink: saleInfo?.buyLink,
+            price: saleInfo?.listPrice?.amount,
+            currency: saleInfo?.listPrice?.currencyCode
+        };
+    }
+    
+    // Enhanced book loading functions
+    async function loadInitialBooks() {
+        showLoading('books-container');
+        try {
+            const books = await getTopRatedBooks();
+            displayBooks(books, 'books-container');
+            recommendedBooks = books;
+        } catch (error) {
+            showError('books-container', 'Failed to load books. Please try again later.');
+        }
+    }
+    
+    async function loadBrowseBooks(query = 'bestsellers', category = '') {
+        const container = document.getElementById('browse-books-container');
+        showLoading('browse-books-container');
+        
+        try {
+            let books;
+            if (category) {
+                books = await getBooksByCategory(category);
+            } else {
+                books = await searchGoogleBooks(query);
+            }
+            displayBooks(books, 'browse-books-container');
+        } catch (error) {
+            showError('browse-books-container', 'Failed to load books. Please try again later.');
+        }
+    }
+    
+    function displayBooks(books, containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        container.innerHTML = '';
+        
+        if (books.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-book"></i>
+                    <p>No books found</p>
+                </div>
+            `;
+            return;
+        }
+        
+        books.forEach(book => {
+            container.appendChild(createBookCard(book));
+        });
+    }
+    
+    function createBookCard(book) {
+        const card = document.createElement('div');
+        card.className = 'book-card';
+        
+        const authors = Array.isArray(book.authors) ? book.authors.join(', ') : book.authors;
+        const truncatedDescription = book.description.length > 150 
+            ? book.description.substring(0, 150) + '...' 
+            : book.description;
+        
+        card.innerHTML = `
+            <div class="book-cover">
+                <img src="${book.thumbnail}" alt="${book.title}" loading="lazy">
+            </div>
+            <div class="book-info">
+                <h3 class="book-title">${book.title}</h3>
+                <p class="book-author">By ${authors}</p>
+                <div class="book-rating">
+                    ${generateStarRating(book.rating)}
+                    <span>${book.rating.toFixed(1)} (${book.ratingsCount || 0})</span>
+                </div>
+                <p class="book-description">${truncatedDescription}</p>
+                ${book.categories.length > 0 ? `
+                    <div class="book-categories">
+                        ${book.categories.slice(0, 2).map(cat => `<span class="badge badge-primary">${cat}</span>`).join('')}
+                    </div>
+                ` : ''}
+                                 <div class="user-rating" data-book-id="${book.id}" style="margin: 10px 0;">
+                     <span style="font-size: 14px; margin-right: 10px;">Rate this book:</span>
+                     <div class="rating-stars">
+                         ${[1,2,3,4,5].map(star => `<i class="fas fa-star rating-star" data-rating="${star}" style="color: #ddd; cursor: pointer; margin-right: 2px;"></i>`).join('')}
+                     </div>
+                 </div>
+                 <div class="book-actions">
+                     <button class="add-to-shelf" data-book-id="${book.id}" data-action="wantToRead">
+                         <i class="fas fa-bookmark"></i> Want to Read
+                     </button>
+                     <button class="add-to-shelf" data-book-id="${book.id}" data-action="reading">
+                         <i class="fas fa-book-open"></i> Reading
+                     </button>
+                     <button class="view-details" data-book-id="${book.id}">
+                         <i class="fas fa-external-link-alt"></i> Read
+                     </button>
+                 </div>
+            </div>
+        `;
+        
+        // Cache the book data
+        booksCache[book.id] = book;
+        
+        // Add event listeners
+        const addToShelfButtons = card.querySelectorAll('.add-to-shelf');
+        addToShelfButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (currentUser) {
+                    const action = button.getAttribute('data-action');
+                    addToShelf(book.id, action);
+                } else {
+                    openModal('login');
+                }
+            });
+        });
+        
+        card.querySelector('.view-details').addEventListener('click', (e) => {
+            e.stopPropagation();
+            viewBookDetails(book.id);
+            trackUserInteraction(book.id, 'click');
+        });
+        
+                 // Track view interaction
+         card.addEventListener('mouseenter', () => {
+             trackUserInteraction(book.id, 'view');
+         });
+         
+         // Rating functionality
+         const ratingStars = card.querySelectorAll('.rating-star');
+         const userRating = getUserRating(book.id);
+         if (userRating) {
+             updateStarDisplay(ratingStars, userRating);
+         }
+         
+         ratingStars.forEach((star, index) => {
+             star.addEventListener('mouseenter', () => {
+                 updateStarDisplay(ratingStars, index + 1, true);
+             });
+             
+             star.addEventListener('mouseleave', () => {
+                 const currentRating = getUserRating(book.id);
+                 updateStarDisplay(ratingStars, currentRating || 0);
+             });
+             
+             star.addEventListener('click', () => {
+                 const rating = index + 1;
+                 setUserRating(book.id, rating);
+                 updateStarDisplay(ratingStars, rating);
+                 trackUserInteraction(book.id, `rated_${rating}`);
+                 showNotification(`Rated "${book.title}" ${rating} star${rating > 1 ? 's' : ''}!`, 'success');
+             });
+         });
+         
+         return card;
+    }
+    
+    // User interaction tracking
+    function trackUserInteraction(bookId, type) {
+        if (!currentUser) return;
+        
+        const interaction = {
+            bookId,
+            type,
+            timestamp: Date.now(),
+            userId: currentUser.email
+        };
+        
+        userInteractions.push(interaction);
+        localStorage.setItem(`interactions_${currentUser.email}`, JSON.stringify(userInteractions));
+        
+        // Update recommendations based on interactions
+        if (userInteractions.length % 5 === 0) { // Update every 5 interactions
+            updatePersonalizedRecommendations();
+        }
+         }
+     
+     // Rating system functions
+     function getUserRating(bookId) {
+         if (!currentUser) return null;
+         return userRatings[bookId] || null;
+     }
+     
+     function setUserRating(bookId, rating) {
+         if (!currentUser) return;
+         userRatings[bookId] = rating;
+         localStorage.setItem(`ratings_${currentUser.email}`, JSON.stringify(userRatings));
+     }
+     
+     function updateStarDisplay(stars, rating, isHover = false) {
+         stars.forEach((star, index) => {
+             if (index < rating) {
+                 star.style.color = isHover ? '#ffeb3b' : '#ffd700';
+             } else {
+                 star.style.color = '#ddd';
+             }
+         });
+     }
+     
+     // Personalized recommendations
+    async function updatePersonalizedRecommendations() {
+        if (!currentUser || userInteractions.length === 0) return;
+        
+        try {
+            // Get user's preferred categories based on interactions
+            const categoryPreferences = getUserCategoryPreferences();
+            
+            // Get books from preferred categories
+            const recommendations = [];
+            for (const category of categoryPreferences.slice(0, 3)) {
+                const books = await getBooksByCategory(category, 4);
+                recommendations.push(...books);
+            }
+            
+            // Filter out books already in user's collection
+            const userBookIds = [
+                ...userBooks.reading.map(b => b.id),
+                ...userBooks.wantToRead.map(b => b.id),
+                ...userBooks.finished.map(b => b.id)
+            ];
+            
+            const filteredRecommendations = recommendations.filter(book => 
+                !userBookIds.includes(book.id)
+            );
+            
+            // Update the home page recommendations
+            if (document.getElementById('home').classList.contains('active')) {
+                displayBooks(filteredRecommendations.slice(0, 8), 'books-container');
+            }
+            
+        } catch (error) {
+            console.error('Error updating recommendations:', error);
+        }
+    }
+    
+    function getUserCategoryPreferences() {
+        const categoryCount = {};
+        
+        userInteractions.forEach(interaction => {
+            const book = booksCache[interaction.bookId];
+            if (book && book.categories) {
+                book.categories.forEach(category => {
+                    categoryCount[category] = (categoryCount[category] || 0) + 1;
+                });
+            }
+        });
+        
+        return Object.keys(categoryCount)
+            .sort((a, b) => categoryCount[b] - categoryCount[a])
+            .slice(0, 5);
+    }
+    
+    // Enhanced authentication
+    function handleLogin(e) {
+        e.preventDefault();
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+        
+        // In production, validate with backend
+        if (email && password) {
+            currentUser = {
+                email: email,
+                name: email.split('@')[0],
+                joinDate: Date.now()
+            };
+            
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+            loadUserData();
+            updateUIAfterAuth();
+            closeModals();
+            
+            showNotification('Welcome back! Successfully logged in.', 'success');
+            updatePersonalizedRecommendations();
+        }
+    }
+    
+    function handleRegister(e) {
+        e.preventDefault();
+        const name = document.getElementById('register-name').value;
+        const email = document.getElementById('register-email').value;
+        const password = document.getElementById('register-password').value;
+        const confirm = document.getElementById('register-confirm').value;
+        
+        if (password !== confirm) {
+            showNotification('Passwords do not match!', 'error');
+            return;
+        }
+        
+        if (name && email && password) {
+            currentUser = {
+                email: email,
+                name: name,
+                joinDate: Date.now()
+            };
+            
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+            initializeUserData();
+            updateUIAfterAuth();
+            closeModals();
+            
+            showNotification('Account created successfully! Welcome to BookifyMe.', 'success');
+        }
+    }
+    
+         function loadUserData() {
+         if (!currentUser) return;
+         
+         const userData = localStorage.getItem(`userBooks_${currentUser.email}`);
+         if (userData) {
+             userBooks = JSON.parse(userData);
+         }
+         
+         const interactionData = localStorage.getItem(`interactions_${currentUser.email}`);
+         if (interactionData) {
+             userInteractions = JSON.parse(interactionData);
+         }
+         
+         const ratingsData = localStorage.getItem(`ratings_${currentUser.email}`);
+         if (ratingsData) {
+             userRatings = JSON.parse(ratingsData);
+         }
+         
+         updateMyBooksDisplay();
+     }
+    
+         function initializeUserData() {
+         userBooks = { reading: [], wantToRead: [], finished: [] };
+         userInteractions = [];
+         userRatings = {};
+         saveUserData();
+     }
+    
+    function saveUserData() {
+        if (!currentUser) return;
+        
+        localStorage.setItem(`userBooks_${currentUser.email}`, JSON.stringify(userBooks));
+        localStorage.setItem(`interactions_${currentUser.email}`, JSON.stringify(userInteractions));
+    }
+    
+    // Enhanced book shelf management
+    function addToShelf(bookId, shelf) {
+        if (!currentUser) {
+            openModal('login');
+            return;
+        }
+        
+        const book = booksCache[bookId];
+        if (!book) return;
+        
+        // Remove from other shelves
+        Object.keys(userBooks).forEach(key => {
+            userBooks[key] = userBooks[key].filter(b => b.id !== bookId);
+        });
+        
+        // Add to specified shelf
+        userBooks[shelf].push(book);
+        saveUserData();
+        updateMyBooksDisplay();
+        
+        trackUserInteraction(bookId, `added_to_${shelf}`);
+        
+        const shelfNames = {
+            reading: 'Currently Reading',
+            wantToRead: 'Want to Read',
+            finished: 'Finished Reading'
+        };
+        
+        showNotification(`Added "${book.title}" to ${shelfNames[shelf]}!`, 'success');
+    }
+    
+    function removeFromShelf(bookId, shelf) {
+        userBooks[shelf] = userBooks[shelf].filter(book => book.id !== bookId);
+        saveUserData();
+        updateMyBooksDisplay();
+        showNotification('Book removed from shelf.', 'info');
+    }
+    
+    function updateMyBooksDisplay() {
+        const shelves = ['reading', 'wantToRead', 'finished'];
+        const shelfIds = ['reading-books', 'want-to-read-books', 'finished-books'];
+        
+        shelves.forEach((shelf, index) => {
+            const container = document.getElementById(shelfIds[index]);
+            if (!container) return;
+            
+            if (userBooks[shelf].length === 0) {
+                const emptyMessages = {
+                    reading: "You're not reading any books yet",
+                    wantToRead: "Your wishlist is empty",
+                    finished: "You haven't finished any books yet"
+                };
+                
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-book"></i>
+                        <p>${emptyMessages[shelf]}</p>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = '';
+                userBooks[shelf].forEach(book => {
+                    const bookElement = createShelfBookCard(book, shelf);
+                    container.appendChild(bookElement);
+                });
+            }
+        });
+        
+        updateReadingStats();
+    }
+    
+    function createShelfBookCard(book, shelf) {
+        const card = document.createElement('div');
+        card.className = 'book-card';
+        
+        const authors = Array.isArray(book.authors) ? book.authors.join(', ') : book.authors;
+        
+        card.innerHTML = `
+            <div class="book-cover">
+                <img src="${book.thumbnail}" alt="${book.title}">
+            </div>
+            <div class="book-info">
+                <h3 class="book-title">${book.title}</h3>
+                <p class="book-author">By ${authors}</p>
+                <div class="book-rating">
+                    ${generateStarRating(book.rating)}
+                    <span>${book.rating.toFixed(1)}</span>
+                </div>
+                <div class="book-actions">
+                    <button class="move-book" data-book-id="${book.id}" data-from="${shelf}" data-to="reading">
+                        <i class="fas fa-book-open"></i> Reading
+                    </button>
+                    <button class="move-book" data-book-id="${book.id}" data-from="${shelf}" data-to="finished">
+                        <i class="fas fa-check"></i> Finished
+                    </button>
+                    <button class="remove-book" data-book-id="${book.id}" data-shelf="${shelf}">
+                        <i class="fas fa-times"></i> Remove
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // Add event listeners
+        card.querySelectorAll('.move-book').forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const bookId = button.getAttribute('data-book-id');
+                const from = button.getAttribute('data-from');
+                const to = button.getAttribute('data-to');
+                
+                if (from !== to) {
+                    addToShelf(bookId, to);
+                }
+            });
+        });
+        
+                 card.querySelector('.remove-book').addEventListener('click', (e) => {
+             e.stopPropagation();
+             const bookId = e.target.closest('button').getAttribute('data-book-id');
+             const shelf = e.target.closest('button').getAttribute('data-shelf');
+             removeFromShelf(bookId, shelf);
+         });
+        
+        return card;
+    }
+    
+    function updateReadingStats() {
+        const totalBooks = userBooks.finished.length;
+        const totalPages = userBooks.finished.reduce((sum, book) => sum + (book.pageCount || 0), 0);
+        const genres = new Set();
+        
+        Object.values(userBooks).flat().forEach(book => {
+            if (book.categories) {
+                book.categories.forEach(cat => genres.add(cat));
+            }
+        });
+        
+        const avgRating = userBooks.finished.length > 0 
+            ? (userBooks.finished.reduce((sum, book) => sum + (book.rating || 0), 0) / userBooks.finished.length).toFixed(1)
+            : 0;
+        
+        // Update stats display
+        const statCards = document.querySelectorAll('.stat-card .stat-value');
+        if (statCards.length >= 4) {
+            statCards[0].textContent = totalBooks;
+            statCards[1].textContent = totalPages.toLocaleString();
+            statCards[2].textContent = genres.size;
+            statCards[3].textContent = avgRating;
+        }
+    }
+    
+    // Enhanced search and filtering
+    async function handleSearch() {
+        const query = browseSearchInput.value.trim();
+        if (query) {
+            showLoading('browse-books-container');
+            try {
+                const books = await searchGoogleBooks(query, 20);
+                displayBooks(books, 'browse-books-container');
+                
+                // Add search info
+                const container = document.getElementById('browse-books-container');
+                const info = document.createElement('div');
+                info.className = 'api-info';
+                info.innerHTML = `<i class="fas fa-search"></i> Found ${books.length} results for "${query}"`;
+                container.prepend(info);
+            } catch (error) {
+                showError('browse-books-container', 'Search failed. Please try again.');
+            }
+        }
+    }
+    
+    async function filterBooksByCategory(category) {
+        const container = document.getElementById('browse-books-container');
+        showLoading('browse-books-container');
+        
+        try {
+            let books;
+            if (category) {
+                books = await getBooksByCategory(category, 20);
+            } else {
+                books = await searchGoogleBooks('bestsellers', 20);
+            }
+            
+            displayBooks(books, 'browse-books-container');
+            
+            if (category) {
+                const info = document.createElement('div');
+                info.className = 'api-info';
+                info.innerHTML = `<i class="fas fa-tag"></i> Showing books in "${category}" category`;
+                container.prepend(info);
+            }
+        } catch (error) {
+            showError('browse-books-container', 'Failed to load books. Please try again.');
+        }
+    }
+    
+    // Utility functions
+    function showLoading(containerId) {
+        const container = document.getElementById(containerId);
+        if (container) {
+            container.innerHTML = `
+                <div class="loading">
+                    <i class="fas fa-spinner fa-spin"></i> Loading books...
+                </div>
+            `;
+        }
+    }
+    
+    function showError(containerId, message) {
+        const container = document.getElementById(containerId);
+        if (container) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+    }
+    
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.style.cssText = `
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            background: ${type === 'success' ? '#00b894' : type === 'error' ? '#ff6b6b' : '#0984e3'};
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            z-index: 3000;
+            max-width: 300px;
+            animation: slideIn 0.3s ease;
+        `;
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => {
+                document.body.removeChild(notification);
+            }, 300);
+        }, 3000);
+    }
+    
+    function viewBookDetails(bookId) {
+        const book = booksCache[bookId];
+        if (book && book.previewLink) {
+            window.open(book.previewLink, '_blank');
+        } else if (book && book.infoLink) {
+            window.open(book.infoLink, '_blank');
+        }
+    }
+    
+    function generateStarRating(rating) {
+        let stars = '';
+        const fullStars = Math.floor(rating);
+        const hasHalfStar = rating % 1 >= 0.5;
+        
+        for (let i = 0; i < fullStars; i++) {
+            stars += '<i class="fas fa-star"></i>';
+        }
+        
+        if (hasHalfStar) {
+            stars += '<i class="fas fa-star-half-alt"></i>';
+        }
+        
+        const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
+        for (let i = 0; i < emptyStars; i++) {
+            stars += '<i class="far fa-star"></i>';
+        }
+        
+        return stars;
+    }
+    
+    function switchTab(tabName) {
+        tabContents.forEach(tab => tab.classList.remove('active'));
+        navLinks.forEach(link => link.classList.remove('active'));
+        
+        document.getElementById(tabName).classList.add('active');
+        document.querySelector(`.nav-link[data-tab="${tabName}"]`).classList.add('active');
+        
+        // Load content based on tab
+        if (tabName === 'browse' && document.getElementById('browse-books-container').innerHTML === '') {
+            loadBrowseBooks();
+        } else if (tabName === 'categories') {
+            loadCategoryBooks();
+        } else if (tabName === 'my-books' && currentUser) {
+            updateMyBooksDisplay();
+        }
+    }
+    
+    async function loadCategoryBooks() {
+        const container = document.getElementById('category-books-container');
+        showLoading('category-books-container');
+        
+        try {
+            const categories = ['fantasy', 'science fiction', 'mystery', 'romance'];
+            const promises = categories.map(cat => getBooksByCategory(cat, 3));
+            const results = await Promise.all(promises);
+            const books = results.flat();
+            
+            displayBooks(books, 'category-books-container');
+        } catch (error) {
+            showError('category-books-container', 'Failed to load category books.');
+        }
+    }
+    
+    function setupAPIInfo() {
+        const apiInfos = document.querySelectorAll('.api-info');
+        apiInfos.forEach(info => {
+            if (GOOGLE_BOOKS_API_KEY === 'YOUR_API_KEY_HERE') {
+                info.innerHTML = `
+                    <i class="fas fa-exclamation-triangle"></i> 
+                    <strong>Setup Required:</strong> Please add your Google Books API key to enable full functionality. 
+                    <a href="https://developers.google.com/books/docs/v1/using#auth" target="_blank">Get API Key</a>
+                `;
+                info.style.background = '#fff3cd';
+                info.style.color = '#856404';
+            }
+        });
+    }
+    
+    // Modal functions
+    function openModal(modalType) {
+        closeModals();
+        if (modalType === 'login') {
+            loginModal.style.display = 'flex';
+        } else if (modalType === 'register') {
+            registerModal.style.display = 'flex';
+        }
+    }
+    
+    function closeModals() {
+        loginModal.style.display = 'none';
+        registerModal.style.display = 'none';
+    }
+    
+         function handleLogout() {
+         currentUser = null;
+         userBooks = { reading: [], wantToRead: [], finished: [] };
+         userInteractions = [];
+         userRatings = {};
+         
+         localStorage.removeItem('currentUser');
+         updateUIAfterAuth();
+         switchTab('home');
+         showNotification('You have been logged out.', 'info');
+         
+         // Reload initial books
+         loadInitialBooks();
+     }
+    
+    function checkLoginStatus() {
+        const userData = localStorage.getItem('currentUser');
+        if (userData) {
+            currentUser = JSON.parse(userData);
+            loadUserData();
+            updateUIAfterAuth();
+        }
+    }
+    
+    function updateUIAfterAuth() {
+        if (currentUser) {
+            loginBtn.style.display = 'none';
+            registerBtn.style.display = 'none';
+            logoutBtn.style.display = 'block';
+            logoutBtn.textContent = `Logout (${currentUser.name})`;
+            myBooksLink.style.display = 'block';
+        } else {
+            loginBtn.style.display = 'block';
+            registerBtn.style.display = 'block';
+            logoutBtn.style.display = 'none';
+            myBooksLink.style.display = 'none';
+        }
+    }
+    
+    // Add CSS animations
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+        
+        .book-categories {
+            margin: 10px 0;
+        }
+        
+        .notification {
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        
+        .move-book, .remove-book {
+            font-size: 12px !important;
+            padding: 6px 10px !important;
+        }
+    `;
+    document.head.appendChild(style);
+    
+    // Initialize the app when the DOM is loaded
+    document.addEventListener('DOMContentLoaded', init);
+</script>

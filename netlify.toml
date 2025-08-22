@@ -1,0 +1,29 @@
+[build]
+  # No build process needed for vanilla HTML/CSS/JS
+  publish = "."
+
+[build.environment]
+  # Environment variables can be set in Netlify dashboard
+
+[[headers]]
+  # Security headers
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Content-Security-Policy = "default-src 'self' https:; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: https: blob:; font-src 'self' https://cdnjs.cloudflare.com; connect-src 'self' https://www.googleapis.com https://www.google-analytics.com"
+
+[[redirects]]
+  # Redirect all routes to index.html for SPA behavior
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  conditions = {Role = ["admin"]}
+
+# Custom 404 page (optional)
+[[redirects]]
+  from = "/404"
+  to = "/index.html"
+  status = 200

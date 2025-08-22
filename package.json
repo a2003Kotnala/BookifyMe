@@ -1,0 +1,37 @@
+{
+  "name": "bookifyme",
+  "version": "1.0.0",
+  "description": "A Netflix-style book recommendation platform with AI-powered personalized suggestions",
+  "main": "index.html",
+  "scripts": {
+    "start": "live-server --port=8000 --open=/index.html",
+    "dev": "live-server --port=3000 --open=/index.html --watch=.",
+    "serve": "python -m http.server 8000",
+    "build": "echo 'No build process needed for vanilla HTML/CSS/JS'",
+    "deploy": "echo 'Ready for deployment - upload index.html to your hosting provider'"
+  },
+  "keywords": [
+    "books",
+    "recommendation",
+    "netflix-style",
+    "google-books-api",
+    "reading",
+    "bookshelf",
+    "personalized",
+    "ai",
+    "ml"
+  ],
+  "author": "BookifyMe Team",
+  "license": "MIT",
+  "devDependencies": {
+    "live-server": "^1.2.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/bookifyme.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/bookifyme/issues"
+  },
+  "homepage": "https://your-username.github.io/bookifyme"
+}
