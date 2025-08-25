@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Books - BookifyMe</title>
+    <link rel="stylesheet" href="https://cdn.tailwindcss.com">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Chakra+Petch:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <div class="container header-content">
+            <div class="header-left">
+                <a href="index.html" class="header-logo">BookifyMe</a>
+            </div>
+            <div class="user-actions">
+                <a href="login.html" class="btn">Login</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="main-wrapper">
+        <main class="container">
+            <h2 class="section-title">Book Recommendations</h2>
+            
+            <div class="search-container">
+                <div class="search-bar">
+                    <input type="text" placeholder="Search for books, authors, or genres..." autocomplete="off">
+                    <button><i class="fas fa-search"></i></button>
+                </div>
+            </div>
+            
+            <div class="search-options">
+                <div class="filter-group">
+                    <label for="sort-by">Sort By</label>
+                    <select id="sort-by">
+                        <option value="relevance">Relevance</option>
+                        <option value="newest">Newest</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="genre">Genre</label>
+                    <select id="genre">
+                        <option value="all">All Genres</option>
+                        <option value="fiction">Fiction</option>
+                        <option value="non-fiction">Non-Fiction</option>
+                        <option value="fantasy">Fantasy</option>
+                        <option value="sci-fi">Science Fiction</option>
+                        <option value="mystery">Mystery</option>
+                        <option value="romance">Romance</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="books-container" id="books-list">
+                <!-- Books will be loaded here -->
+            </div>
+            
+            <div class="loading" id="loading">
+                <i class="fas fa-spinner fa-spin"></i> Loading books...
+            </div>
+        </main>
+        
+        <footer>
+            <div class="container">
+                <div class="footer-content">
+                    <div class="footer-section"><h3>About BookifyMe</h3><p>Discover your next favorite book with intelligent recommendations.</p></div>
+                    <div class="footer-section"><h3>Quick Links</h3><a href="index.html">Home</a><a href="books.html">Books</a></div>
+                    <div class="footer-section"><h3>Help & Support</h3><a href="#">FAQ</a><a href="#">Contact Us</a><a href="#">Privacy Policy</a></div>
+                </div>
+                <div class="footer-bottom"><p>&copy; 2025 BookifyMe. All rights reserved.</p></div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Simple book loading for the standalone books page
+        document.addEventListener('DOMContentLoaded', async function() {
+            const loading = document.getElementById('loading');
+            const booksContainer = document.getElementById('books-list');
+            
+            try {
+                // Fetch some books from Google Books API
+                const response = await fetch('https://www.googleapis.com/books/v1/volumes?q=bestsellers&maxResults=20&key=AIzaSyDfWNJLVlecyOYbfDtce7BQwmbO0zg9QBc');
+                const data = await response.json();
+                
+                if (data.items && data.items.length > 0) {
+                    booksContainer.innerHTML = '';
+                    data.items.forEach(book => {
+                        const volumeInfo = book.volumeInfo;
+                        const title = volumeInfo.title || 'No Title';
+                        const author = volumeInfo.authors ? volumeInfo.authors.join(', ') : 'Unknown Author';
+                        const imageUrl = volumeInfo.imageLinks?.thumbnail || `https://placehold.co/220x300/6a11cb/ffffff?text=${encodeURIComponent(title.charAt(0))}`;
+                        
+                        const bookCard = document.createElement('div');
+                        bookCard.className = 'book-card';
+                        bookCard.innerHTML = `
+                            <div class="book-cover">
+                                <img src="${imageUrl}" alt="${title}">
+                            </div>
+                            <div class="book-info">
+                                <div class="book-details">
+                                   <h3 class="book-title">${title}</h3>
+                                   <p class="book-author">${author}</p>
+                                </div>
+                                <div class="book-actions">
+                                    <button class="add-to-shelf-btn" title="Add to shelf"><i class="fas fa-plus"></i></button>
+                                    <a href="${volumeInfo.previewLink}" target="_blank" class="read-now-btn" title="Preview"><i class="fas fa-book-reader"></i></a>
+                                </div>
+                            </div>
+                        `;
+                        booksContainer.appendChild(bookCard);
+                    });
+                } else {
+                    booksContainer.innerHTML = '<div class="empty-state"><p>No books found.</p></div>';
+                }
+            } catch (error) {
+                console.error('Error loading books:', error);
+                booksContainer.innerHTML = '<div class="empty-state"><p>Error loading books. Please try again later.</p></div>';
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
